@@ -1,0 +1,40 @@
+# Tiny config — validation du pipeline, CPU training, < 4 GB
+[model]
+latent_dim = 128
+hidden_dim = 256
+num_heads = 4
+num_layers = 4
+vocab_size = 10000
+max_seq_len = 512
+voxel_resolution = 32
+audio_sample_rate = 8000
+audio_max_length = 1.0
+
+[training]
+learning_rate = 0.001
+warmup_steps = 100
+max_steps = 1000
+gradient_accumulation = 1
+weight_decay = 0.01
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+dropout = 0.1
+
+[inference]
+temperature = 0.8
+top_p = 0.95
+max_tokens = 512
+
+[mcp]
+server_url = "http://127.0.0.1:3000"
+timeout_ms = 30000
+max_retries = 3
+
+[agent]
+max_steps = 20
+step_timeout_secs = 30
+capture_screenshots = false
+
+[logging]
+level = "info"
+format = "json"

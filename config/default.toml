@@ -1,0 +1,39 @@
+[model]
+latent_dim = 1024
+hidden_dim = 4096
+num_heads = 32
+num_layers = 24
+vocab_size = 50000
+max_seq_len = 2048
+voxel_resolution = 64
+audio_sample_rate = 44100
+audio_max_length = 30.0
+
+[training]
+learning_rate = 0.0001
+warmup_steps = 1000
+max_steps = 100000
+gradient_accumulation = 4
+weight_decay = 0.01
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+dropout = 0.1
+
+[inference]
+temperature = 0.8
+top_p = 0.95
+max_tokens = 4096
+
+[mcp]
+server_url = "http://127.0.0.1:3000"
+timeout_ms = 30000
+max_retries = 3
+
+[agent]
+max_steps = 50
+step_timeout_secs = 60
+capture_screenshots = true
+
+[logging]
+level = "info"
+format = "json"

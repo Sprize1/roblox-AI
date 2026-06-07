@@ -1,0 +1,67 @@
+# --- Publish CODE ONLY. Everything below is excluded ---
+
+# Data: derived from scraped Roblox places = creator IP + large. NOT redistributed.
+/data/
+*.jsonl
+*.rbxl
+*.rbxlx
+*.rbxm
+*.rbxmx
+*.npy
+*.npz
+
+# Models, checkpoints, training logs, generated artifacts
+/models/
+*.safetensors
+*.bin
+*.onnx
+*.ckpt
+*.pt
+*.luau
+
+# Python env / caches
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+
+# Big binaries / archives
+*.whl
+*.zip
+*.7z
+*.tar
+*.gz
+
+# Old extraction/dataset pipeline (superseded by *_v3 — kept on disk, not published)
+/scripts/archive/
+
+# First from-scratch GPT (flat-text, abandoned — kept on disk, not published)
+/torch_*.py
+/gen_bpe.py
+/generate.py
+/generate_structured.py
+/cloud_train.py
+/cloud_setup.sh
+/vram_calc.py
+/requirements_cloud.txt
+
+# Dead Rust CLI (abandoned approach — kept on disk, not published)
+/src/
+/Cargo.toml
+/Cargo.lock
+/target/
+**/*.rs.bk
+
+# Personal / local (do NOT publish)
+.claude/
+obsidian/
+second-brain/
+
+# Logs / secrets / IDE / OS
+*.log
+.env
+.env.local
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

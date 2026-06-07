@@ -1,0 +1,40 @@
+# Small config — training on consumer GPU (16-24 GB VRAM)
+[model]
+latent_dim = 256
+hidden_dim = 512
+num_heads = 8
+num_layers = 6
+vocab_size = 30000
+max_seq_len = 1024
+voxel_resolution = 32
+audio_sample_rate = 16000
+audio_max_length = 3.0
+
+[training]
+learning_rate = 0.0003
+warmup_steps = 500
+max_steps = 50000
+gradient_accumulation = 4
+weight_decay = 0.01
+adam_beta1 = 0.9
+adam_beta2 = 0.999
+dropout = 0.1
+
+[inference]
+temperature = 0.8
+top_p = 0.95
+max_tokens = 1024
+
+[mcp]
+server_url = "http://127.0.0.1:3000"
+timeout_ms = 30000
+max_retries = 3
+
+[agent]
+max_steps = 50
+step_timeout_secs = 60
+capture_screenshots = true
+
+[logging]
+level = "info"
+format = "text"
