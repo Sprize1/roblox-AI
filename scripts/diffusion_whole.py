@@ -14,10 +14,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from checker import deep_overlap_rate
 
 DEV = "cuda" if torch.cuda.is_available() else "cpu"
-KMAX = 256
+KMAX = 4096
 
 
-def load_games(path, pmin=8, pmax=256, max_extent=600):
+def load_games(path, pmin=8, pmax=4096, max_extent=4000):
     games = []
     for line in open(path, encoding="utf-8"):
         try:
@@ -67,13 +67,40 @@ def to_tensor(games):
     return X
 
 
+class LinBlock(nn.Module):
+    """Non-causal LINEAR attention over the set of parts: O(n.d^2), sub-quadratic, no N^2 matrix.
+    out_i = phi(q_i) . (sum_j phi(k_j) v_j^T) / (phi(q_i) . sum_j phi(k_j)),  phi = elu+1."""
+    def __init__(self, d, heads):
+        super().__init__()
+        self.h = heads
+        self.ln1 = nn.LayerNorm(d); self.ln2 = nn.LayerNorm(d)
+        self.qkv = nn.Linear(d, 3 * d); self.proj = nn.Linear(d, d)
+        self.gate = nn.Linear(d, 1)                            # learned per-token gate: suppress padding in the KV sum
+        self.mlp = nn.Sequential(nn.Linear(d, 4 * d), nn.GELU(), nn.Linear(4 * d, d))
+
+    def forward(self, x):
+        B, N, C = x.shape
+        h1 = self.ln1(x)
+        qkv = self.qkv(h1).reshape(B, N, 3, self.h, C // self.h).permute(2, 0, 3, 1, 4)
+        q, k, v = qkv[0], qkv[1], qkv[2]                       # (B, h, N, d)
+        g = torch.sigmoid(self.gate(h1)).reshape(B, 1, N, 1)  # (B,1,N,1) -- gate keys, not queries
+        q = F.elu(q) + 1; k = (F.elu(k) + 1) * g               # gated key: low-presence tokens contribute ~0
+        kv = k.transpose(-2, -1) @ v                           # (B, h, d, d) -- linear in N
+        denom = (q * k.sum(dim=2, keepdim=True)).sum(-1, keepdim=True) + 1e-6
+        a = (q @ kv) / denom                                   # (B, h, N, d)
+        a = a.transpose(1, 2).reshape(B, N, C)
+        x = x + self.proj(a)
+        x = x + self.mlp(self.ln2(x))
+        return x
+
+
 class Denoiser(nn.Module):
     def __init__(self, d=192, layers=5, heads=6):
         super().__init__()
         self.inp = nn.Linear(7, d)
         self.tproj = nn.Sequential(nn.Linear(d, d), nn.SiLU(), nn.Linear(d, d))
-        enc = nn.TransformerEncoderLayer(d, heads, d * 4, batch_first=True, activation="gelu")
-        self.tr = nn.TransformerEncoder(enc, layers)
+        self.blocks = nn.ModuleList([LinBlock(d, heads) for _ in range(layers)])
+        self.lnf = nn.LayerNorm(d)
         self.out = nn.Linear(d, 7); self.d = d
 
     def temb(self, t):
@@ -83,7 +110,10 @@ class Denoiser(nn.Module):
         return torch.cat([a.sin(), a.cos()], -1)
 
     def forward(self, x, t):
-        return self.out(self.tr(self.inp(x) + self.tproj(self.temb(t))[:, None, :]))
+        h = self.inp(x) + self.tproj(self.temb(t))[:, None, :]
+        for b in self.blocks:
+            h = b(h)
+        return self.out(self.lnf(h))
 
 
 def voxel_feat(g, R=8):
@@ -133,15 +163,23 @@ def main():
         if s % 2000 == 0:
             print(f"  step {s}/{a.steps} loss {loss.item():.4f} {time.time()-t0:.0f}s", flush=True)
 
+    import os; os.makedirs("models", exist_ok=True)
+    torch.save(model.state_dict(), "models/whole_model.pt")      # save BEFORE the risky generation
     model.eval()
+    gbs = 4                                                       # mini-batch gen: avoid OOM at large KMAX
+    outs = []
     with torch.no_grad():
-        x = torch.randn(a.gen, KMAX, 7, device=DEV)
-        for ti in reversed(range(a.T)):
-            t = torch.full((a.gen,), ti, device=DEV); pred = model(x, t)
-            ac, ab = alpha[ti], abar[ti]
-            x = (x - (1 - ac) / (1 - ab).sqrt() * pred) / ac.sqrt()
-            if ti > 0: x = x + betas[ti].sqrt() * torch.randn_like(x)
-        x = x.cpu().numpy()
+        for s0 in range(0, a.gen, gbs):
+            b = min(gbs, a.gen - s0)
+            x = torch.randn(b, KMAX, 7, device=DEV)
+            for ti in reversed(range(a.T)):
+                t = torch.full((b,), ti, device=DEV); pred = model(x, t)
+                ac, ab = alpha[ti], abar[ti]
+                x = (x - (1 - ac) / (1 - ab).sqrt() * pred) / ac.sqrt()
+                if ti > 0:
+                    x = x + betas[ti].sqrt() * torch.randn_like(x)
+            outs.append(x.cpu().numpy())
+    x = np.concatenate(outs, 0)
     pres = x[:, :, 6] > 0
     boxes6 = x[:, :, :6] * std + mean
 

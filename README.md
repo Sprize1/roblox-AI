@@ -1,8 +1,10 @@
 # Roblox game generation, a research log
 
-I spent a while trying to generate complete Roblox games (the 3D part layout plus the Luau logic
-that goes with it) from a text prompt. This repo is the honest log of that: what I tried, what
-worked, what didn't, and the walls I hit, with the actual numbers.
+I'm trying to generate complete Roblox games (the 3D part layout plus the Luau logic that goes with
+it) from scratch. This repo is the honest log of that: what I tried, what worked, what didn't, and
+the walls I hit, with the actual numbers. It started as a post-mortem and turned back into active
+work once I realized the wall I thought had stopped it was the wrong wall (see step 5). So this is a
+work in progress, not a closed case.
 
 The bet I started from: the hard and valuable part isn't writing the scripts (any decent LLM
 already writes fine Luau). It's getting the geometry and the logic to actually fit together at the
@@ -21,11 +23,13 @@ distribution where the text model fails. Measured deep-overlap was 0.34 (real ga
 0.33) versus 0.74 for the text model, and it kept part sizes realistic instead of cheating. This
 was the one clearly positive result.
 
-The real wall turned out to be data, and I can put numbers on it. Usable scraped games are big
-(median around 2285 parts, ~1000 studs across) and there aren't many (~1774 uncopylocked total,
-only ~141 with 256 parts or fewer). The geometry/logic coupling signal is sparse too: about 0.6
-object references per script, and ~800 resolvable cross-part references in the whole corpus. That
-is nowhere near enough to learn the binding.
+I thought the wall was data, and for the logic half it is. Usable scraped games are big (median
+around 2285 parts, ~1000 studs across) and there aren't many (~1774 uncopylocked total). The
+geometry/logic coupling signal is genuinely sparse: about 0.6 object references per script, and
+~800 resolvable cross-part references in the whole corpus, nowhere near enough to learn the binding.
+But for the layout half I was wrong about the cause. I had only been training on the ~141 games
+with 256 parts or fewer, and that cap was self-imposed by quadratic attention, not by what data
+exists. Lifting it (step 5) unlocked most of the corpus I'd been throwing away.
 
 Geometric checkers help, but the metric gets gamed. A deterministic SAT overlap/reachability
 checker computes spatial truth the model can't. Using it to filter training samples gave a clean
@@ -63,7 +67,24 @@ the data that would make a "wow" demo possible isn't something you can get from 
    DDPM with a transformer denoiser over a set of box primitives (variable count via a presence
    channel), augmented with 90-degree rotations and mirrors. It matches the real spatial
    distribution with sizes intact. On whole games it stays coherent and isn't just memorizing the
-   training set, but it's messy and limited to the small-game tail because of the data wall.
+   training set, but it was messy and stuck at the small-game tail (256 parts), which is what step 5
+   is about.
+
+5. Sub-quadratic attention, scaling to whole games (in progress). The 256-part cap wasn't the data,
+   it was the quadratic attention. Swapping softmax for non-causal linear attention (O(n), about ten
+   lines of pure PyTorch, no extra deps, and the right primitive for an unordered set anyway) lifted
+   it. Training games went from ~141 to ~906, and generation went from ~155-part fragments to
+   coherent full-size games and then to median-scale ones (~2267 parts, around the ~2285 dataset
+   median), still novel and not memorizing. A learned per-token gate that suppresses the padding in
+   the linear-attention sum tightened the layouts (deep-overlap 0.075 to 0.150). The whole thing
+   runs end to end on one consumer GPU (RX 7600 XT, ROCm, about 7 of 16 GB). The honest open problem:
+   scale and density pull against each other (more padding at larger context dilutes the gate), so
+   the big layouts are structured and correctly oriented but still too loose to play. That is the
+   current work: stronger gate, more model capacity, more training. (Aside: I'd assumed the fused
+   sub-quadratic kernels in flash-linear-attention couldn't run on ROCm/Windows. They can, Triton
+   works there via triton-windows; `fla_shim.py` is the small patch that gets it importing. I went
+   with plain PyTorch linear attention here because a set model wants non-causal attention, but the
+   FLA path is open for the causal op-stream model.)
 
 ## Repo map
 
@@ -71,7 +92,8 @@ the data that would make a "wow" demo possible isn't something you can get from 
 |---|---|
 | Parsing (.rbxl/.rbxlx to structured) | `rbxlx_parser.py`, `build_structured_v3.py`, `convert_binary_places.py` |
 | Unified op-stream | `luau_lower.py`, `serialize_game.py`, `build_opstream_dataset.py`, `analyze_dsl_coverage.py`, `lower_scripts.py` |
-| From-scratch models | `train_opstream.py` (GPT), `diffusion_layout.py`, `diffusion_whole.py`, `point_cloud.py` |
+| From-scratch models | `train_opstream.py` (GPT), `diffusion_layout.py`, `diffusion_whole.py` (linear-attention set diffusion, step 5), `point_cloud.py` |
+| ROCm / sub-quadratic | `fla_shim.py` (imports flash-linear-attention on ROCm/Windows), `gen_whole.py` |
 | Geometric checker and metrics | `checker.py`, `eval_opstream.py`, `eval_synth.py` |
 | Grounding / data experiments | `ground_experiment.py`, `make_synth.py`, `make_real_layout.py`, `make_demo_chunks.py`, `make_script_pairs.py` |
 | Two-stage demo (early) | `train_demo_lora.py`, `generate_phase2.py`, `generate_game.py`, `generate_demo.py`, `make_demo_obby.py` |
@@ -81,16 +103,18 @@ the data that would make a "wow" demo possible isn't something you can get from 
 
 No data, models, or assets are in here (see `.gitignore`). The structured datasets come from
 scraped Roblox places, which are creator IP, so redistributing them would be exactly the copyright
-problem this project concluded against. The code shows how the data was built; reproducing it
-needs your own legally-sourced data.
+problem this project avoids. The code shows how the data was built; reproducing it needs your own
+legally-sourced data.
 
-## Where it landed
+## Where it is now
 
-3D-native is the right direction for spatial coherence. It learns structure where text is blind,
-and it does it without needing a ton of data. But generating a coherent, playable, whole game is
-gated on data (games are big and few, the logic coupling is sparse) that you can't legitimately get
-from outside Roblox. What's worth keeping here is the method and the clearly mapped walls, not a
-finished generator.
+3D-native is the right direction for spatial coherence, and sub-quadratic attention turned the part
+I'd written off, whole-game scale, into something tractable on a single consumer GPU. The model now
+generates novel, full-size, median-scale layouts that are structured and correctly oriented, just
+not yet dense or playable enough. So this went from a post-mortem back to active work. The open
+fronts: coherence at scale (gate, capacity, diffusion steps), and then the logic coupling, which is
+the one part still genuinely starved for data (sparse cross-part references) rather than compute.
+Geometry first, binding next.
 
 ## Thanks
 

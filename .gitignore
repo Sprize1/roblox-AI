@@ -56,6 +56,10 @@ __pycache__/
 .claude/
 obsidian/
 second-brain/
+screenshots results/
+*.png
+*.jpg
+*.jpeg
 
 # Logs / secrets / IDE / OS
 *.log
